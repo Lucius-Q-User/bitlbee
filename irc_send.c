@@ -367,51 +367,76 @@ void irc_send_msg(irc_user_t *iu, const char *type, const char *dst, const char 
 	irc_send_msg_ts(iu, type, dst, msg, prefix, 0);
 }
 
+static const char *translate_newlines(const char* line)
+{
+	size_t st_len = 1;
+	const char *msgp = line;
+	while (*msgp) {
+		if (*msgp == '\\' || *msgp == '\n') {
+			st_len++;
+		}
+		if (*msgp == '\r') {
+			st_len--;
+		}
+		st_len++;
+		msgp++;
+	}
+	char *out = g_malloc(st_len);
+	char *write_ptr = out;
+	size_t orig_len = strlen(line);
+	for (size_t i = 0; i < orig_len; i++) {
+		if (line[i] == '\\') {
+			*write_ptr = '\\';
+			write_ptr++;
+			*write_ptr = '\\';
+		} else if (line[i] == '\n') {
+			*write_ptr = '\\';
+			write_ptr++;
+			*write_ptr = 'n';
+		} else if (line[i] == '\r') {
+			continue;
+		} else {
+			*write_ptr = line[i];  
+		}	
+		write_ptr++;
+	}
+	*write_ptr = '\0';
+	return out;
+  
+}
 void irc_send_msg_ts(irc_user_t *iu, const char *type, const char *dst, const char *msg, const char *prefix, time_t ts)
 {
-	char last = 0;
-	const char *s = msg, *line = msg;
+	msg = translate_newlines(msg);
+	const char *s = msg;
 	char *tags = NULL;
-	char raw_msg[strlen(msg) + 1024];
+	size_t msglen = strlen(msg);
+	char *raw_msg = g_malloc(msglen + 1024);
 
 	if (!(iu->irc->caps & CAP_SERVER_TIME)) {
 		ts = 0;
 	}
-
-	while (!last) {
-		if (*s == '\r' && *(s + 1) == '\n') {
-			s++;
-		}
-		if (*s == '\n') {
-			last = s[1] == 0;
-		} else {
-			last = s[0] == 0;
-		}
-		if (*s == 0 || *s == '\n') {
-			if (ts) {
-				tags = irc_format_servertime(iu->irc, ts);
-			}
-			if (g_strncasecmp(line, "/me ", 4) == 0 && (!prefix || !*prefix) &&
-			    g_strcasecmp(type, "PRIVMSG") == 0) {
-				strcpy(raw_msg, "\001ACTION ");
-				strncat(raw_msg, line + 4, s - line - 4);
-				strcat(raw_msg, "\001");
-				irc_send_msg_raw_tags(iu, type, dst, tags, raw_msg);
-			} else {
-				*raw_msg = '\0';
-				if (prefix && *prefix) {
-					strcpy(raw_msg, prefix);
-				}
-				strncat(raw_msg, line, s - line);
-				irc_send_msg_raw_tags(iu, type, dst, tags, raw_msg);
-			}
-			if (ts) {
-				g_free(tags);
-			}
-			line = s + 1;
-		}
-		s++;
+	if (ts) {
+		tags = irc_format_servertime(iu->irc, ts);
 	}
+	if (g_strncasecmp(msg, "/me ", 4) == 0 && (!prefix || !*prefix) &&
+	    g_strcasecmp(type, "PRIVMSG") == 0) {
+		strcpy(raw_msg, "\001ACTION ");
+		strcat(raw_msg, msg + 4);
+		strcat(raw_msg, "\001");
+		irc_send_msg_raw_tags(iu, type, dst, tags, raw_msg);
+	} else {
+		*raw_msg = '\0';
+		if (prefix && *prefix) {
+			strcpy(raw_msg, prefix);
+		}
+		strcat(raw_msg, msg);
+		irc_send_msg_raw_tags(iu, type, dst, tags, raw_msg);
+	}
+	if (ts) {
+		g_free(tags);
+	}
+	g_free(msg);
+	g_free(raw_msg);
 }
 
 void irc_send_msg_raw(irc_user_t *iu, const char *type, const char *dst, const char *msg)
